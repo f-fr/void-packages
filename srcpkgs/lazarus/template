@@ -1,64 +1,211 @@
 # Template file for 'lazarus'
 pkgname=lazarus
-version=2.2.0
+version=3.8
 revision=1
 # For adding a revision suffix to version on the source tarball file
 _version_revision_suffix="-0"
+build_style=meta
 archs="x86_64 i686"
 hostmakedepends="fpc rsync"
-makedepends="fpc-src qt5pas-devel"
-depends="fpc-src fpc gdb perl qt5pas-devel"
-short_desc="Delphi-like IDE for FreePascal"
+makedepends="fpc-src gtk+-devel qt6pas-devel"
+depends="lazarus-ide-gtk2 lazarus-tools lazarus-lcl-qt6"
+short_desc="Delphi-like IDE for FreePascal - meta package"
 maintainer="Orphaned <orphan@voidlinux.org>"
-license="GPL-2.0-or-later, MPL-2.0, LGPL-2.0-or-later"
+license="GPL-2.0-or-later AND LGPL-2.0 WITH Classpath-exception-2.0 AND MPL-1.1 AND Apache-2.0"
 homepage="http://www.lazarus.freepascal.org"
 distfiles="${SOURCEFORGE_SITE}/project/lazarus/Lazarus%20Zip%20_%20GZip/Lazarus%20${version}/lazarus-${version}${_version_revision_suffix}.tar.gz"
-checksum=b6b5d516511e3dfb34910d7656db068d4bba80f009692500aebbcae79cb12160
+checksum=1da826fefa4175347f8e43324583b12d76f3ef56ebe48bd5fa6e847ec85295fc
 nopie=yes
 lib32disabled=yes
+subpackages="lazarus-tools lazarus-lcl-gtk2 lazarus-lcl-qt6 lazarus-lcl-nogui lazarus-lcl lazarus-ide-gtk2 lazarus-ide-qt6 lazarus-ide"
+
+_qt6pas_version=6.2.10
+_qt6pas_revision=1
+
+_fpmakeopt=
+_fpcopt="-g -gl -gw -O3"
 
 do_build() {
-	make FPC=/usr/bin/fpc LCL_PLATFORM=qt5 bigide
+    # Re-create the Makefiles
+    export FPCDIR=/usr/lib/fpc/src
+    fpcmake -Tall
+    pushd components
+    fpcmake -Tall
+    popd
+
+    # Compile some basic targets required by everything else
+    make registration ${_fpmakeopt} OPT="${_fpcopt}"
+
+    # Compile lazbuild - required to build other targets
+    make lazbuild ${_fpmakeopt} OPT="${_fpcopt}"
+
+    # Compile LCL base (Lazarus Component Library) for the "nogui" widgetset
+    make lcl ${_fpmakeopt} OPT="${_fpcopt}" LCL_PLATFORM=nogui
+
+    # Compile extra tools
+    make tools ${_fpmakeopt} OPT="${_fpcopt}"
+
+    # Compile the LCL base + extra components for GUI widgetsets
+    for WIDGETSET in qt6 gtk2; do
+        make lcl basecomponents bigidecomponents ${_fpmakeopt} OPT="${_fpcopt}" LCL_PLATFORM="${WIDGETSET}"
+    done
+
+    # Compile the IDE itself
+    # We compile the IDE for all widgets sets, gtk2 (the default one)
+    # being the last. Installing the correct lazarus-ide-WIDGETSET package
+    # allows the user to recompile the IDE with that widgetset.
+    for WIDGETSET in qt6 gtk2; do
+        make bigide ${_fpmakeopt} OPT="${_fpcopt}" LCL_PLATFORM=gtk2
+    done
 }
 
 do_install() {
-	vmkdir usr/lib/lazarus
-	vmkdir usr/bin
-	vmkdir usr/share/man/man1
-	vmkdir usr/share/doc
+    make install INSTALL_PREFIX=${DESTDIR}/usr _LIB=lib
 
-	rsync -a \
-		--exclude="CVS"     --exclude=".cvsignore" \
-		--exclude="*.ppw"   --exclude="*.ppl" \
-		--exclude="*.ow"    --exclude="*.a"\
-		--exclude="*.rst"   --exclude=".#*" \
-		--exclude="*.~*"    --exclude="*.bak" \
-		--exclude="*.orig"  --exclude="*.rej" \
-		--exclude=".xvpics" \
-		--exclude="killme*" --exclude=".gdb_hist*" \
-		--exclude="debian"  --exclude="COPYING*" \
-		--exclude="*.app"   --exclude="tools/install" \
-		. "$DESTDIR"/usr/lib/lazarus
+    # Remove man page for an executable that is not actually installed.
+    rm ${DESTDIR}/usr/share/man/man1/svn2revisioninc.1* || true
 
-	ln -rs ${DESTDIR}/usr/lib/lazarus/lazbuild ${DESTDIR}/usr/bin/lazbuild
+    vinstall install/lazarus.desktop 644 /usr/share/applications
 
-	cp -R install/man/man1/* ${DESTDIR}/usr/share/man/man1
+    install -d ${DESTDIR}/etc/lazarus
+    sed "s#__LAZARUSDIR__#/usr/lib/${pkgname}#;s#__FPCSRCDIR__#/usr/lib/fpc/src#" \
+	    tools/install/linux/environmentoptions.xml \
+	    > ${DESTDIR}/etc/lazarus/environmentoptions.xml
 
-	mv ${DESTDIR}/usr/lib/lazarus/docs ${DESTDIR}/usr/share/doc/lazarus
+    chmod 755 ${DESTDIR}/usr/lib/${pkgname}/components/lazreport/tools/localize.sh
+}
 
-	vmkdir usr/lib/lazarus/docs
-	ln -rs ${DESTDIR}/usr/share/doc/lazarus/chm ${DESTDIR}/usr/lib/lazarus/docs/html
-	ln -rs ${DESTDIR}/usr/share/doc/lazarus/lazdoc.css ${DESTDIR}/usr/lib/lazarus/docs/lazdoc.css
+# helper function to move complicated patterns
+_move() {
+    for file in ${DESTDIR}/$1; do
+        if [ -e $file ]; then
+            _file=${file#${DESTDIR}/}
+            echo $_file
+            vmove $_file
+        fi
+    done
+}
 
-	rm -r ${DESTDIR}/usr/lib/lazarus/{install,test}
+lazarus-lcl_package() {
+    short_desc="Lazarus Component Library"
+    depends="fpc"
 
-	# Symlink binaries from usr/lib/lazarus to usr/bin
-	ln -rs ${DESTDIR}/usr/lib/lazarus/lazarus ${DESTDIR}/usr/bin/lazarus
-	ln -rs ${DESTDIR}/usr/lib/lazarus/startlazarus ${DESTDIR}/usr/bin/startlazarus
+    pkg_install() {
+        _move "usr/lib/${sourcepkg}/components"
+        _move "usr/lib/${sourcepkg}/lcl"
+    }
+}
 
-	# make 'desktop-file-validate' happy and fix missing .png icon
-	vsed -e 's|\(Categories\).*|\1=IDE;Development;|' \
-		 -i install/lazarus.desktop
-	vinstall install/lazarus.desktop 644 usr/share/applications
-	vinstall images/ide_icon48x48.png 644 usr/share/pixmaps lazarus.png
+lazarus-lcl-nogui_package() {
+    short_desc="Lazarus Component Library - non-graphical components"
+    depends="fpc ${sourcepkg}-lcl-${version}_${revision}"
+
+    pkg_install() {
+        _move "usr/lib/${sourcepkg}/components/*/lib/*-linux/nogui"
+        _move "usr/lib/${sourcepkg}/components/*/units/*-linux/nogui"
+        _move "usr/lib/${sourcepkg}/lcl/interfaces/nogui"
+        _move "usr/lib/${sourcepkg}/lcl/units/nogui"
+    }
+}
+
+lazarus-lcl-gtk2_package() {
+    short_desc="Lazarus Component Library - GTK2 widgetset support"
+    depends="fpc ${sourcepkg}-lcl-${version}_${revision} gtk+"
+
+    pkg_install() {
+        _move "usr/lib/${sourcepkg}/components/*/lib/*-linux/gtk2"
+        _move "usr/lib/${sourcepkg}/components/*/units/*-linux/gtk2"
+        _move "usr/lib/${sourcepkg}/lcl/interfaces/gtk2"
+        _move "usr/lib/${sourcepkg}/lcl/units/gtk2"
+
+        _move "usr/lib/${sourcepkg}/components/*/design/lib/*-linux/gtk2"
+        _move "usr/lib/${sourcepkg}/components/*/design/units/*-linux/gtk2"
+        _move "usr/lib/${sourcepkg}/components/*/include/gtk2"
+        _move "usr/lib/${sourcepkg}/components/*/include/intf/gtk2"
+        _move "usr/lib/${sourcepkg}/components/*/lib/*-linux-gtk2"
+        _move "usr/lib/${sourcepkg}/components/*/units/gtk2"
+
+        _move "usr/lib/${sourcepkg}/components/chmhelp/packages/help/lib/*-linux/gtk2"
+        _move "usr/lib/${sourcepkg}/components/chmhelp/packages/idehelp/lib/*-linux/gtk2"
+        _move "usr/lib/${sourcepkg}/components/fpcunit/ide/lib/*-linux/gtk2"
+        _move "usr/lib/${sourcepkg}/components/jcf2/IdePlugin/lazarus/lib/*-linux/gtk2"
+    }
+}
+
+lazarus-lcl-qt6_package() {
+    short_desc="Lazarus Component Library - Qt6 widgetset support"
+    depends="fpc ${sourcepkg}-lcl-${version}_${revision} qt6pas>=${_qt6pas_version}_${_qt6pas_revision}"
+
+    pkg_install() {
+        _move "usr/lib/${sourcepkg}/components/*/lib/*-linux/qt6"
+        _move "usr/lib/${sourcepkg}/components/*/units/*-linux/qt6"
+        _move "usr/lib/${sourcepkg}/lcl/interfaces/qt6"
+        _move "usr/lib/${sourcepkg}/lcl/units/qt6"
+
+        _move "usr/lib/${sourcepkg}/components/*/design/lib/*-linux/qt6"
+        _move "usr/lib/${sourcepkg}/components/*/design/units/*-linux/qt6"
+        _move "usr/lib/${sourcepkg}/components/*/include/qt6"
+        _move "usr/lib/${sourcepkg}/components/*/include/intf/qt6"
+        _move "usr/lib/${sourcepkg}/components/*/lib/*-linux-qt6"
+        _move "usr/lib/${sourcepkg}/components/*/units/qt6"
+
+        _move "usr/lib/${sourcepkg}/components/chmhelp/packages/help/lib/*-linux/qt6"
+        _move "usr/lib/${sourcepkg}/components/chmhelp/packages/idehelp/lib/*-linux/qt6"
+        _move "usr/lib/${sourcepkg}/components/fpcunit/ide/lib/*-linux/qt6"
+        _move "usr/lib/${sourcepkg}/components/jcf2/IdePlugin/lazarus/lib/*-linux/qt6"
+    }
+}
+
+lazarus-tools_package() {
+    short_desc="Lazarus IDE helper programs"
+    depends="fpc binutils glibc-devel ${sourcepkg}-lcl-${version}_${revision}"
+
+    pkg_install() {
+        vmove "usr/bin/lazbuild"
+        vmove "usr/bin/lazres"
+        vmove "usr/bin/lrstolfm"
+        vmove "usr/bin/updatepofiles"
+        vmove "etc/${sourcepkg}/environmentoptions.xml"
+        vmove "usr/share/man/man1/lazbuild.1*"
+        vmove "usr/share/man/man1/lazres.1*"
+        vmove "usr/share/man/man1/lrstolfm.1*"
+        vmove "usr/share/man/man1/updatepofiles.1*"
+    }
+}
+
+lazarus-ide_package() {
+    short_desc="Lazarus RAD IDE for Free Pascal"
+    depends="gdb fpc fpc-src ${sourcepkg}-lcl-gtk2-${version}_${revision} ${sourcepkg}-tools-${version}_${revision}"
+
+    pkg_install() {
+        vmove "usr/lib/${sourcepkg}"
+        vmove "usr/bin/lazarus-ide"
+        vmove "usr/bin/startlazarus"
+        vmove "usr/share/pixmaps/lazarus.png"
+        vmove "usr/share/applications/*${sourcepkg}.desktop"
+        vmove "usr/share/mime/packages/lazarus.xml"
+        vmove "usr/share/icons/hicolor/48x48/mimetypes/*"
+        vmove "usr/share/man/man1/lazarus-ide.1*"
+        vmove "usr/share/man/man1/startlazarus.1*"
+    }
+}
+
+lazarus-ide-gtk2_package() {
+    short_desc="Lazarus RAD IDE for Free Pascal - GTK2 components"
+    depends="${sourcepkg}-ide-${version}_${revision} ${sourcepkg}-lcl-gtk2-${version}_${revision}"
+
+    pkg_install() {
+        _move "usr/lib/${sourcepkg}/units/*-linux/gtk2"
+        _move "usr/lib/${sourcepkg}/ide/packages/*/lib/*-linux/gtk2"
+    }
+}
+
+lazarus-ide-qt6_package() {
+    short_desc="Lazarus RAD IDE for Free Pascal - Qt6 components"
+    depends="${sourcepkg}-ide-${version}_${revision} ${sourcepkg}-lcl-qt6-${version}_${revision}"
+
+    pkg_install() {
+        _move "usr/lib/${sourcepkg}/units/*-linux/qt6"
+        _move "usr/lib/${sourcepkg}/ide/packages/*/lib/*-linux/qt6"
+    }
 }

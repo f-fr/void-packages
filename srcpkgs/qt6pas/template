@@ -1,0 +1,43 @@
+# Template file for 'lazarus'
+pkgname=qt6pas
+version=6.2.10
+revision=1
+
+# Qt6pas library has its own versioning scheme based on the Qt version
+_lazarus_version=3.8
+_lazarus_version_revision_suffix="-0"
+
+# For adding a revision suffix to version on the source tarball file
+archs="x86_64 i686"
+hostmakedepends="fpc rsync qt6-base"
+makedepends="fpc-src qt6-base-devel"
+depends="qt6-base qt6-gui qt6-printsupport"
+short_desc="Qt6 bindings for Pascal"
+maintainer="Orphaned <orphan@voidlinux.org>"
+license="GPL-2.0-or-later AND LGPL-2.0 WITH Classpath-exception-2.0 AND MPL-1.1 AND Apache-2.0"
+homepage="http://www.lazarus.freepascal.org"
+distfiles="${SOURCEFORGE_SITE}/project/lazarus/Lazarus%20Zip%20_%20GZip/Lazarus%20${version}/lazarus-${version}${_version_revision_suffix}.tar.gz"
+distfiles="${SOURCEFORGE_SITE}/project/lazarus/Lazarus%20Zip%20_%20GZip/Lazarus%20${_lazarus_version}/lazarus-${_lazarus_version}${_lazarus_version_revision_suffix}.tar.gz"
+checksum=1da826fefa4175347f8e43324583b12d76f3ef56ebe48bd5fa6e847ec85295fc
+nopie=yes
+lib32disabled=yes
+
+do_build() {
+    # Build Qt6Pas
+    pushd lcl/interfaces/qt6/cbindings/
+        qmake-qt6 -makefile
+        make ${makejobs}
+    popd
+}
+
+do_install() {
+    vcopy "lcl/interfaces/qt6/cbindings/libQt6Pas.so*" usr/lib
+}
+
+qt6pas-devel_package() {
+    short_desc+=" - development files"
+    depends="${sourcepkg}>=${version}_${revision}"
+    pkg_install() {
+        vmove "usr/lib/libQt6Pas.so"
+    }
+}
